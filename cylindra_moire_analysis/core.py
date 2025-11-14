@@ -1,5 +1,6 @@
 from typing import Annotated
 
+import impy as ip
 import numpy as np
 from cylindra.annotations import BinSizeType, SplinesType
 from cylindra.plugin import register_function
@@ -10,25 +11,15 @@ from matplotlib import pyplot as plt
 from cylindra_moire_analysis.utils import filter_filament, find_min_near_center
 
 
-@register_function
+@register_function(name="Measure skew ...")
 def measure_skew(
     ui: CylindraMainWidget,
     splines: SplinesType,
     bin_size: BinSizeType = 1,
     filament_width: Annotated[float, {"label": "filament width (nm)"}] = 30.0,
-    dx: Annotated[
-        float,
-        {
-            "label": "inter-protofilament distance (nm)",
-            "min": 2,
-            "max": 6,
-            "step": 0.001,
-        },
-    ] = 4.895,
-    min_moier_periodicity: Annotated[
-        float, {"label": "minimum moire periodicity (nm)"}
-    ] = 200.0,
-):
+    dx: Annotated[float, {"label": "inter-protofilament distance (nm)", "min": 1, "max": 100, "step": 0.001}] = 4.895,
+    min_moier_periodicity: Annotated[float, {"label": "minimum moire periodicity (nm)"}] = 200.0,
+):  # fmt: skip
     """Measure skew angle in the traditional way that uses moire pattern.
 
     This method does essentially the same analysis as described in Ku et al., 2020,
@@ -59,7 +50,7 @@ def measure_skew(
         ui.logger.print(f"Length = {spl.length():.1f} nm")
         img_proj = img_st.mean(axis=0)
         img_filt, img_ft = filter_filament(img_proj)
-        ps_sl = slice(0, int(0.55 * img_ft.shape[0]))
+        ps_sl = slice(0, int(0.53 * img_ft.shape[0]))
         ps_proj = np.fft.fftshift(img_ft.real**2 + img_ft.imag**2)[ps_sl]
 
         with ui.logger.set_plt():
@@ -123,7 +114,7 @@ def measure_skew(
     ui.logger.print_table(table, header=False)
 
 
-@register_function(name="Export for TubuleJ", record=False)
+@register_function(name="Export for TubuleJ ...", record=False)
 def export_for_tubulej(
     ui: CylindraMainWidget,
     save_dir: Path.Dir,
@@ -132,7 +123,7 @@ def export_for_tubulej(
     filament_width: Annotated[float, {"label": "filament width (nm)"}] = 30.0,
     save_filtered_images: bool = True,
     project_prefix: str = "MT_",
-):
+):  # fmt: skip
     """Export the straightened and filtered images.
 
     This method creates directories in a format compatible with the manual analysis
@@ -161,11 +152,20 @@ def export_for_tubulej(
         mt_dir = save_dir / f"{project_prefix}{i}"
         mt_dir.mkdir(exist_ok=True)
         img_proj = img_st.mean(axis=0)
-        np.rot90(img_proj).imsave(mt_dir / f"{i}-straight_Centered.tif")
+        _rot90(img_proj).imsave(mt_dir / f"{i}-straight_Centered.tif")
         if save_filtered_images:
             img_filt, _ = filter_filament(img_proj)
-            np.rot90(img_filt).imsave(mt_dir / "filtered image.tif")
+            _rot90(img_filt).imsave(mt_dir / "filtered image.tif")
         angst = img_st.scale.y * 10
-        # NOTE: TubuleJ expects calibration file is a csv file with tab delimiter!
-        calib_data = f"pixelSize\tunit\n{angst:.2f}\t?"
-        mt_dir.joinpath("calibrations.csv").write_text(calib_data)
+        mt_dir.joinpath("calibration.csv").write_text(_calib_text(angst))
+
+
+def _rot90(img: ip.ImgArray) -> ip.ImgArray:
+    """Rotate image by 90 degrees counter-clockwise."""
+    return np.rot90(img)
+
+
+def _calib_text(angst: float) -> str:
+    """Generate calibration text for TubuleJ."""
+    # NOTE: TubuleJ expects calibration file is a csv file with tab delimiter!
+    return f"pixelSize\tunit\n{angst:.2f}\t?\n"

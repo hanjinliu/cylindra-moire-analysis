@@ -15,7 +15,12 @@ classifiers = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "cylindra",
+    "impy-array>=2.4.10",
+    "numpy>=1.23.0",
+    "scipy>=1.11.3",
+    "matplotlib>=3.8.1",
+    "magic-class>=0.7.20",
+    "cylindra>=1.0.2",
 ]
 authors = [
     {name = "Hanjin Liu"},
