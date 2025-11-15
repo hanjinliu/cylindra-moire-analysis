@@ -100,7 +100,7 @@ def measure_skew(
         else:
             dist = 1 / wnum * img_proj.scale.y * img_proj.shape.y
             ui.logger.print(f"L = {dist:.1f} nm, δx = {dx:.3f} nm")
-            skew_moire = np.rad2deg(np.arcsin(dx / dist))
+            skew_moire = np.rad2deg(np.arcsin(min(dx / dist, 1)))
         props[i] = {"moire_skew_angle": skew_moire * skew_sign}
 
         for prop in props.values():
@@ -145,6 +145,7 @@ def export_for_tubulej(
     project_prefix : str, default "MT_"
         Prefix for the microtubule project directories.
     """
+    save_dir = Path(save_dir)
     if not save_dir.exists():
         raise FileNotFoundError(f"Directory '{save_dir}' does not exist.")
     img_st_list = ui.tomogram.straighten(splines, binsize=bin_size, size=filament_width)
