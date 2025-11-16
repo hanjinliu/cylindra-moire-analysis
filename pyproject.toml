@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling>=1.26.1"]
+build-backend = "hatchling.build"
+
 [project]
 name = "cylindra-moire-analysis"
 dynamic = ["version"]
@@ -26,10 +30,6 @@ authors = [
     {name = "Hanjin Liu"},
     {email = "liuhanjin.sc@gmail.com"},
 ]
-
-[build-system]
-requires = ["setuptools>=42.0.0", "wheel"]
-build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 include-package-data = true
