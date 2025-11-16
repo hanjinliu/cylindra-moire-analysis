@@ -31,11 +31,19 @@ authors = [
     {email = "liuhanjin.sc@gmail.com"},
 ]
 
-[tool.setuptools]
-include-package-data = true
+[tool.hatch.version]
+path = "cylindra_moire_analysis/__init__.py"
 
-[tool.setuptools.dynamic.version]
-attr = "cylindra_moire_analysis.__version__"
+[tool.hatch.build.targets.sdist]
+include = ["/cylindra_moire_analysis"]
+exclude = ["/examples", "/docs", "/tests", "setup.py"]
+
+[tool.hatch.build.targets.wheel]
+include = ["/cylindra_moire_analysis"]
+exclude = ["/examples", "/docs", "/tests", "setup.py", "/images"]
+
+[tool.hatch.envs.test.scripts]
+run = "pytest -v"
 
 [project.entry-points."cylindra.plugin"]
 "Moire pattern analysis" = "cylindra_moire_analysis"
