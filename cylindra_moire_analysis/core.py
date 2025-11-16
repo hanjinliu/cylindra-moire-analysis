@@ -23,7 +23,7 @@ def measure_skew(
     """Measure skew angle in the traditional way that uses moire pattern.
 
     This method does essentially the same analysis as described in Ku et al., 2020,
-    Bio-protocols, with some autmations.
+    Bio-protocols, with some automations.
 
     Parameters
     ----------
@@ -54,7 +54,7 @@ def measure_skew(
         ps_proj = np.fft.fftshift(img_ft.real**2 + img_ft.imag**2)[ps_sl]
 
         with ui.logger.set_plt():
-            plt.figure(figsize=(4, 4))
+            plt.figure(figsize=(4, 3))
             plt.title("Power spectrum")
             plt.imshow(
                 ps_proj, cmap="inferno", vmin=0, vmax=np.percentile(ps_proj, 99.9)
@@ -64,7 +64,7 @@ def measure_skew(
             plt.show()
 
         with ui.logger.set_plt():
-            _, axes = plt.subplots(nrows=2, figsize=(6, 3.2), sharex=True)
+            _, axes = plt.subplots(nrows=2, figsize=(5, 2.5), sharex=True)
 
             # find the horizontal line that has the maximum amplitude in the real space
             plt.sca(axes[0])
@@ -73,6 +73,7 @@ def measure_skew(
             profile = img_filt[f"x={ix}"]
             plt.imshow(img_filt.T, cmap="gray")
             plt.axhline(ix + 0.5, color="lime", lw=1)
+            plt.yticks([])
 
             plt.sca(axes[1])
             plt.plot(profile, color="green")
@@ -81,7 +82,7 @@ def measure_skew(
             plt.show()
 
             # power spectrum analysis
-            plt.figure(figsize=(5, 2))
+            plt.figure(figsize=(5, 1.6))
             ymax_loc_ps = int(
                 round(img_proj.shape.y * img_proj.scale.y / min_moier_periodicity)
             )
@@ -93,6 +94,7 @@ def measure_skew(
             plt.title("Power spectrum of the line profile")
             plt.plot(np.arange(spec.size) / upsample_factor, spec, color="gray")
             plt.axvline(wnum, color="red", lw=1, ls="--")
+            plt.tight_layout()
             plt.show()
 
         if wnum == 0:
