@@ -31,6 +31,14 @@ authors = [
     {email = "liuhanjin.sc@gmail.com"},
 ]
 
+[project.optional-dependencies]
+testing = [
+    "pytest",
+    "pytest-qt",
+    "pytest-cov",
+    "cylindra[testing]>=1.0.2",
+]
+
 [tool.hatch.version]
 path = "cylindra_moire_analysis/__init__.py"
 
