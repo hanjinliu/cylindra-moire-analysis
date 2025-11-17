@@ -2,7 +2,9 @@ from typing import Annotated
 
 import impy as ip
 import numpy as np
+import polars as pl
 from cylindra.annotations import BinSizeType, SplinesType
+from cylindra.const import FileFilter
 from cylindra.plugin import register_function
 from cylindra.widgets import CylindraMainWidget
 from magicclass.types import Path
@@ -18,7 +20,7 @@ def measure_skew(
     bin_size: BinSizeType = 1,
     filament_width: Annotated[float, {"label": "filament width (nm)"}] = 30.0,
     dx: Annotated[float, {"label": "inter-protofilament distance (nm)", "min": 1, "max": 100, "step": 0.001}] = 4.895,
-    min_moier_periodicity: Annotated[float, {"label": "minimum moire periodicity (nm)"}] = 200.0,
+    min_moire_periodicity: Annotated[float, {"label": "minimum moire periodicity (nm)"}] = 120.0,
 ):  # fmt: skip
     """Measure skew angle in the traditional way that uses moire pattern.
 
@@ -36,7 +38,7 @@ def measure_skew(
         filament but small enough to exclude noise.
     dx : nm, default 4.895
         Inter-protofilament distance.
-    min_moier_periodicity : nm, default 200.0
+    min_moire_periodicity : nm, default 120.0
         Minimum moire periodicity to consider. Setting to larger value will restrict
         the search range and may help to avoid false detection.
     """
@@ -45,9 +47,10 @@ def measure_skew(
     ui.logger.print_html("<h3> --- Moire pattern analysis --- </h3>")
     for i, img_st in zip(splines, img_st_list, strict=False):
         spl = ui.splines[i]
+        spl_length_nm = spl.length()
         skew_sign = np.sign(spl.props.get_glob("skew_angle", 1))
         ui.logger.print_html(f"<b>Spline-{i}</b>")
-        ui.logger.print(f"Length = {spl.length():.1f} nm")
+        ui.logger.print(f"Length = {spl_length_nm:.1f} nm")
         img_proj = img_st.mean(axis=0)
         img_filt, img_ft = filter_filament(img_proj)
         ps_sl = slice(0, int(0.53 * img_ft.shape[0]))
@@ -63,7 +66,6 @@ def measure_skew(
             plt.tight_layout()
             plt.show()
 
-        with ui.logger.set_plt():
             _, axes = plt.subplots(nrows=2, figsize=(5, 2.5), sharex=True)
 
             # find the horizontal line that has the maximum amplitude in the real space
@@ -83,9 +85,7 @@ def measure_skew(
 
             # power spectrum analysis
             plt.figure(figsize=(5, 1.6))
-            ymax_loc_ps = int(
-                round(img_proj.shape.y * img_proj.scale.y / min_moier_periodicity)
-            )
+            ymax_loc_ps = int(round(spl_length_nm / min_moire_periodicity))
             upsample_factor = 50
             spec = (profile - profile.mean()).local_power_spectra(
                 f"y=0:{ymax_loc_ps}", upsample_factor=upsample_factor
@@ -94,16 +94,27 @@ def measure_skew(
             plt.title("Power spectrum of the line profile")
             plt.plot(np.arange(spec.size) / upsample_factor, spec, color="gray")
             plt.axvline(wnum, color="red", lw=1, ls="--")
+            plt.xlabel("Wave number")
             plt.tight_layout()
             plt.show()
 
         if wnum == 0:
             skew_moire = 0.0
         else:
-            dist = 1 / wnum * img_proj.scale.y * img_proj.shape.y
+            dist = 1 / wnum * spl_length_nm
             ui.logger.print(f"L = {dist:.1f} nm, δx = {dx:.3f} nm")
-            skew_moire = np.rad2deg(np.arcsin(min(dx / dist, 1)))
-        props[i] = {"moire_skew_angle": skew_moire * skew_sign}
+            if dx / dist > 1:
+                ui.logger.print_html(
+                    "<b>Warning</b>: dx / L > 1, setting skew angle to 0."
+                )
+                skew_moire = 0.0
+            else:
+                skew_moire = np.rad2deg(np.arcsin(dx / dist))
+        props[i] = {
+            "spline_length": spl_length_nm,
+            "moire_period": dist,
+            "moire_skew_angle": skew_moire * skew_sign,
+        }
 
         for prop in props.values():
             spl.props.update_glob(prop, bin_size=bin_size)
@@ -114,6 +125,32 @@ def measure_skew(
         table.append(row)
     ui.logger.print_html("<b><u>Summary</u></b>")
     ui.logger.print_table(table, header=False)
+
+
+@register_function(name="Save results as CSV ...", record=False)
+def save_results_as_csv(
+    ui: CylindraMainWidget,
+    save_path: Path.Save[FileFilter.CSV],
+):
+    """Save the measured results as a CSV file."""
+    save_path = Path(save_path)
+    header = [
+        "spline-id",
+        "spline_length_nm",
+        "moire_period_nm",
+        "moire_skew_angle_deg",
+    ]
+    entries = []
+    for i, spl in ui.splines.enumerate():
+        if "moire_skew_angle" not in spl.props.glob.columns:
+            continue
+        length = spl.props.get_glob("spline_length")
+        moire_period = spl.props.get_glob("moire_period")
+        moire_skew_angle = spl.props.get_glob("moire_skew_angle")
+        entries.append([i, length, moire_period, moire_skew_angle])
+    df = pl.DataFrame(entries, schema=header, orient="row")
+    df.write_csv(save_path)
+    ui.logger.print(f"Moire analysis results saved to {save_path}")
 
 
 @register_function(name="Export for TubuleJ ...", record=False)
@@ -151,8 +188,9 @@ def export_for_tubulej(
     if not save_dir.exists():
         raise FileNotFoundError(f"Directory '{save_dir}' does not exist.")
     img_st_list = ui.tomogram.straighten(splines, binsize=bin_size, size=filament_width)
+    ndigits = len(str(ui.splines.count()))
     for i, img_st in zip(splines, img_st_list, strict=False):
-        mt_dir = save_dir / f"{project_prefix}{i}"
+        mt_dir = save_dir / f"{project_prefix}{i:0{ndigits}d}"
         mt_dir.mkdir(exist_ok=True)
         img_proj = img_st.mean(axis=0)
         _rot90(img_proj).imsave(mt_dir / f"{i}-straight_Centered.tif")
