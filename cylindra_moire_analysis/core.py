@@ -8,12 +8,14 @@ from cylindra.const import FileFilter
 from cylindra.plugin import register_function
 from cylindra.widgets import CylindraMainWidget
 from magicclass.types import Path
+from magicclass.utils import thread_worker
 from matplotlib import pyplot as plt
 
 from cylindra_moire_analysis.utils import filter_filament, find_min_near_center
 
 
 @register_function(name="Measure skew ...")
+@thread_worker.with_progress("Measure skew")
 def measure_skew(
     ui: CylindraMainWidget,
     splines: SplinesType,
@@ -42,10 +44,17 @@ def measure_skew(
         Minimum moire periodicity to consider. Setting to larger value will restrict
         the search range and may help to avoid false detection.
     """
-    img_st_list = ui.tomogram.straighten(splines, binsize=bin_size, size=filament_width)
     props: dict[int, dict] = {}
     ui.logger.print_html("<h3> --- Moire pattern analysis --- </h3>")
-    for i, img_st in zip(splines, img_st_list, strict=False):
+    nspl = len(splines)
+    for ith, i in enumerate(splines):
+        yield thread_worker.description(
+            f"Measure skew (image straightening {ith + 1}/{nspl})"
+        )
+        img_st = ui.tomogram.straighten(i, binsize=bin_size, size=filament_width)
+        yield thread_worker.description(
+            f"Measure skew (filament filtering {ith + 1}/{nspl})"
+        )
         spl = ui.splines[i]
         spl_length_nm = spl.length()
         skew_sign = np.sign(spl.props.get_glob("skew_angle", 1))
@@ -56,47 +65,27 @@ def measure_skew(
         ps_sl = slice(0, int(0.53 * img_ft.shape[0]))
         ps_proj = np.fft.fftshift(img_ft.real**2 + img_ft.imag**2)[ps_sl]
 
-        with ui.logger.set_plt():
-            plt.figure(figsize=(4, 3))
-            plt.title("Power spectrum")
-            plt.imshow(
-                ps_proj, cmap="inferno", vmin=0, vmax=np.percentile(ps_proj, 99.9)
-            )
-            plt.axis("off")
-            plt.tight_layout()
-            plt.show()
+        yield _plot_ps_proj.with_args(ui, ps_proj).with_desc(
+            f"Measure skew (line profiling {ith + 1}/{nspl})"
+        )
 
-            _, axes = plt.subplots(nrows=2, figsize=(5, 2.5), sharex=True)
+        # find the horizontal line that has the maximum amplitude in the real space
+        iyopt = np.argmax(np.std(img_filt, axis="x"))
+        ix = find_min_near_center(img_filt[iyopt])
+        profile = img_filt[f"x={ix}"]
 
-            # find the horizontal line that has the maximum amplitude in the real space
-            plt.sca(axes[0])
-            iyopt = np.argmax(np.std(img_filt, axis="x"))
-            ix = find_min_near_center(img_filt[iyopt])
-            profile = img_filt[f"x={ix}"]
-            plt.imshow(img_filt.T, cmap="gray")
-            plt.axhline(ix + 0.5, color="lime", lw=1)
-            plt.yticks([])
+        yield _plot_prof.with_args(ui, img_filt, ix, profile).with_desc(
+            f"Measure skew (parameter calculation {ith + 1}/{nspl})"
+        )
 
-            plt.sca(axes[1])
-            plt.plot(profile, color="green")
-            plt.xlabel("Position (px)")
-            plt.tight_layout(h_pad=0.0)
-            plt.show()
-
-            # power spectrum analysis
-            plt.figure(figsize=(5, 1.6))
-            ymax_loc_ps = int(round(spl_length_nm / min_moire_periodicity))
-            upsample_factor = 50
-            spec = (profile - profile.mean()).local_power_spectra(
-                f"y=0:{ymax_loc_ps}", upsample_factor=upsample_factor
-            )
-            wnum = np.argmax(spec) / upsample_factor
-            plt.title("Power spectrum of the line profile")
-            plt.plot(np.arange(spec.size) / upsample_factor, spec, color="gray")
-            plt.axvline(wnum, color="red", lw=1, ls="--")
-            plt.xlabel("Wave number")
-            plt.tight_layout()
-            plt.show()
+        # power spectrum analysis
+        ymax_loc_ps = int(round(spl_length_nm / min_moire_periodicity))
+        upsample_factor = 50
+        spec = (profile - profile.mean()).local_power_spectra(
+            f"y=0:{ymax_loc_ps}", upsample_factor=upsample_factor
+        )
+        wnum = np.argmax(spec) / upsample_factor
+        yield _plot_wave.with_args(ui, wnum, spec, upsample_factor)
 
         if wnum == 0:
             skew_moire = 0.0
@@ -154,6 +143,7 @@ def save_results_as_csv(
 
 
 @register_function(name="Export for TubuleJ ...", record=False)
+@thread_worker.with_progress("Export for TubuleJ")
 def export_for_tubulej(
     ui: CylindraMainWidget,
     save_dir: Path.Dir,
@@ -187,9 +177,11 @@ def export_for_tubulej(
     save_dir = Path(save_dir)
     if not save_dir.exists():
         raise FileNotFoundError(f"Directory '{save_dir}' does not exist.")
-    img_st_list = ui.tomogram.straighten(splines, binsize=bin_size, size=filament_width)
+    nspl = len(splines)
     ndigits = len(str(ui.splines.count()))
-    for i, img_st in zip(splines, img_st_list, strict=False):
+    for ith, i in enumerate(splines):
+        yield thread_worker.description(f"Export for TubuleJ ({ith + 1}/{nspl})")
+        img_st = ui.tomogram.straighten(i, binsize=bin_size, size=filament_width)
         mt_dir = save_dir / f"{project_prefix}{i:0{ndigits}d}"
         mt_dir.mkdir(exist_ok=True)
         img_proj = img_st.mean(axis=0)
@@ -210,3 +202,47 @@ def _calib_text(angst: float) -> str:
     """Generate calibration text for TubuleJ."""
     # NOTE: TubuleJ expects calibration file is a csv file with tab delimiter!
     return f"pixelSize\tunit\n{angst:.2f}\t?\n"
+
+
+@thread_worker.callback
+def _plot_ps_proj(ui: "CylindraMainWidget", ps_proj: ip.ImgArray) -> None:
+    with ui.logger.set_plt():
+        plt.figure(figsize=(4, 3))
+        plt.title("Power spectrum")
+        plt.imshow(ps_proj, cmap="inferno", vmin=0, vmax=np.percentile(ps_proj, 99.9))
+        plt.axis("off")
+        plt.tight_layout()
+        plt.show()
+
+
+@thread_worker.callback
+def _plot_prof(
+    ui: "CylindraMainWidget", img_filt: ip.ImgArray, ix: int, profile: ip.ImgArray
+) -> None:
+    with ui.logger.set_plt():
+        _, axes = plt.subplots(nrows=2, figsize=(5, 2.5), sharex=True)
+
+        plt.sca(axes[0])
+        plt.imshow(img_filt.value.T, cmap="gray")
+        plt.axhline(ix + 0.5, color="lime", lw=1)
+        plt.yticks([])
+
+        plt.sca(axes[1])
+        plt.plot(profile.value, color="green")
+        plt.xlabel("Position (px)")
+        plt.tight_layout(h_pad=0.0)
+        plt.show()
+
+
+@thread_worker.callback
+def _plot_wave(
+    ui: "CylindraMainWidget", wnum: float, spec: ip.ImgArray, upsample_factor: int
+) -> float:
+    with ui.logger.set_plt():
+        plt.figure(figsize=(5, 1.6))
+        plt.title("Power spectrum of the line profile")
+        plt.plot(np.arange(spec.size) / upsample_factor, spec, color="gray")
+        plt.axvline(wnum, color="red", lw=1, ls="--")
+        plt.xlabel("Wave number")
+        plt.tight_layout()
+        plt.show()
